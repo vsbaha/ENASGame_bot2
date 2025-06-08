@@ -1,10 +1,9 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import ForeignKey, String, Text, DateTime, Boolean, BigInteger, CheckConstraint
+from sqlalchemy import ForeignKey, String, Text , BigInteger, DateTime, Enum as SAEnum
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
-
 import os
 
 class Base(DeclarativeBase):
@@ -24,6 +23,17 @@ class TournamentStatus(str, Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     
+class TeamStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+# Новое перечисление для статуса прохождения команды
+class ProgressStatus(str, Enum):
+    IN_PROGRESS = "in_progress"
+    WINNER = "winner"
+    LOSER = "loser"
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -34,7 +44,12 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(default=UserRole.USER)
     added_by: Mapped[Optional[int]] = mapped_column(BigInteger)
 
-
+class BlackList(Base):
+    __tablename__ = "blacklist"
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    banned_by: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    reason: Mapped[str] = mapped_column(String(255), nullable=True)
+    ban_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class GameFormat(Base):
     __tablename__ = "game_formats"
@@ -68,7 +83,6 @@ class Tournament(Base):
     status: Mapped[TournamentStatus] = mapped_column(default=TournamentStatus.PENDING)
     created_by: Mapped[int] = mapped_column(BigInteger)  # ID создателя
 
-
 class Team(Base):
     __tablename__ = "teams"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -76,12 +90,18 @@ class Team(Base):
     captain_tg_id: Mapped[int] = mapped_column(BigInteger, index=True)
     team_name: Mapped[str] = mapped_column(String(50))
     logo_path: Mapped[str] = mapped_column(String(200))
-    is_approved: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[TeamStatus] = mapped_column(default=TeamStatus.PENDING)
+    progress_status: Mapped[ProgressStatus] = mapped_column(
+        SAEnum(ProgressStatus, name="progressstatus"),
+        default=ProgressStatus.IN_PROGRESS,
+        nullable=False
+    )
     tournament: Mapped["Tournament"] = relationship(back_populates="teams")
     players: Mapped[List["Player"]] = relationship(
         back_populates="team",
         cascade="all, delete-orphan"
     )
+
 class Player(Base):
     __tablename__ = "players"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -90,7 +110,6 @@ class Player(Base):
     is_substitute: Mapped[bool] = mapped_column(default=False)
     team: Mapped["Team"] = relationship(back_populates="players")
     
-
 
 async def create_db():
     async with engine.begin() as conn:

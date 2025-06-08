@@ -87,3 +87,11 @@ def subscription_kb():
     builder.adjust(1)
     return builder.as_markup()
 
+def captain_groups_url_kb():
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="👥 Группа капитанов",
+        url="https://t.me/+geQWbpdC_ZY2NDFi"
+    )
+    builder.adjust(1)
+    return builder.as_markup()

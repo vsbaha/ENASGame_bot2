@@ -1,5 +1,5 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup
 
 def back_button_kb(target: str) -> InlineKeyboardMarkup:
     """Универсальная кнопка 'Назад'"""

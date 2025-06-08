@@ -8,7 +8,8 @@ def admin_main_menu() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="🏆 Управление турнирами", callback_data="manage_tournaments"),
         InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-        InlineKeyboardButton(text="📝 Модерация команд", callback_data="moderate_teams"),  # Новая кнопка
+        InlineKeyboardButton(text="📝 Модерация команд", callback_data="moderate_teams"),
+        InlineKeyboardButton(text="📢 Рассылки", callback_data="notifications_menu"),  # Новая кнопка
         width=1
     )
     return builder.as_markup()
@@ -32,13 +33,15 @@ def admin_tournaments_kb(tournaments: list) -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-def tournament_actions_kb(tournament_id: int) -> InlineKeyboardMarkup:
+def tournament_actions_kb(tournament_id: int, is_active: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_tournament_{tournament_id}"),
-        InlineKeyboardButton(text="◀️ Назад к списку", callback_data="back_to_tournaments"),  # Обновленная кнопка
-        width=2
-    )
+    builder.button(text="🗑 Удалить", callback_data=f"delete_tournament_{tournament_id}")
+    builder.button(text="◀️ Назад к списку", callback_data="back_to_tournaments")
+    if is_active:
+        builder.button(text="🔴 Сделать неактивным", callback_data=f"deactivate_tournament_{tournament_id}")
+    else:
+        builder.button(text="🟢 Сделать активным", callback_data=f"activate_tournament_{tournament_id}")
+    builder.adjust(2)
     return builder.as_markup()
 
 def tournaments_management_kb(tournaments) -> InlineKeyboardMarkup:
@@ -139,3 +142,51 @@ def team_request_kb(team_id: int):
     builder.button(text="❌ Отклонить", callback_data=f"reject_team_{team_id}")
     builder.adjust(2)
     return builder.as_markup()
+
+def tournament_status_kb(tournament_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if is_active:
+        builder.button(text="🔴 Сделать неактивным", callback_data=f"deactivate_tournament_{tournament_id}")
+    else:
+        builder.button(text="🟢 Сделать активным", callback_data=f"activate_tournament_{tournament_id}")
+    builder.button(text="◀️ Назад", callback_data="back_to_tournaments")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def team_request_preview_kb(team_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👁 Посмотреть команду", callback_data=f"preview_team_{team_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def team_request_preview_kb(team_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👁 Посмотреть команду", callback_data=f"preview_team_{team_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def notifications_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Сделать рассылку всем", callback_data="notify_all_users")],
+            [InlineKeyboardButton(text="Победителям", callback_data="notify_winners")],
+            [InlineKeyboardButton(text="Проигравшим", callback_data="notify_losers")],
+            [InlineKeyboardButton(text="Командам в процессе", callback_data="notify_inprogress")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]
+        ]
+    )
+    
+# --- Кнопка с ссылкой ---
+def group_invite_kb(url: str, text: str = "Перейти в группу") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=text, url=url)]
+        ]
+    )
+    
+def tournaments_btn_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Турниры", callback_data="show_tournaments")]
+        ]
+    )
