@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import ForeignKey, String, Text , BigInteger, DateTime, Enum as SAEnum
+from sqlalchemy import ForeignKey, String, Text , BigInteger, DateTime, Enum as SAEnum, Boolean, Index
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
@@ -56,6 +56,7 @@ class GameFormat(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), index=True)
     format_name: Mapped[str] = mapped_column(String(20))  # Например, "1x1", "2x2", "5x5"
+    min_players_per_team: Mapped[int]
     max_players_per_team: Mapped[int]
     game: Mapped["Game"] = relationship(back_populates="formats")
 
@@ -80,7 +81,7 @@ class Tournament(Base):
     game: Mapped["Game"] = relationship(back_populates="tournaments")
     format: Mapped["GameFormat"] = relationship()
     teams: Mapped[List["Team"]] = relationship(back_populates="tournament", cascade="all, delete-orphan")
-    status: Mapped[TournamentStatus] = mapped_column(default=TournamentStatus.PENDING)
+    status: Mapped[TournamentStatus] = mapped_column(default=TournamentStatus.PENDING, index=True)
     created_by: Mapped[int] = mapped_column(BigInteger)  # ID создателя
 
 class Team(Base):
@@ -90,7 +91,7 @@ class Team(Base):
     captain_tg_id: Mapped[int] = mapped_column(BigInteger, index=True)
     team_name: Mapped[str] = mapped_column(String(50))
     logo_path: Mapped[str] = mapped_column(String(200))
-    status: Mapped[TeamStatus] = mapped_column(default=TeamStatus.PENDING)
+    status: Mapped[TeamStatus] = mapped_column(default=TeamStatus.PENDING, index=True)
     progress_status: Mapped[ProgressStatus] = mapped_column(
         SAEnum(ProgressStatus, name="progressstatus"),
         default=ProgressStatus.IN_PROGRESS,
@@ -102,13 +103,22 @@ class Team(Base):
         cascade="all, delete-orphan"
     )
 
+
 class Player(Base):
     __tablename__ = "players"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    is_substitute: Mapped[bool] = mapped_column(default=False)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    nickname: Mapped[str] = mapped_column(String, nullable=False)
+    game_id: Mapped[str] = mapped_column(String, nullable=False)
+    captain_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    is_substitute: Mapped[bool] = mapped_column(Boolean, default=False)
     team: Mapped["Team"] = relationship(back_populates="players")
+    captain: Mapped["User"] = relationship(foreign_keys=[captain_id])
+
+    __table_args__ = (
+        Index('idx_team_captain', 'team_id', 'captain_id'),
+    )
     
 
 async def create_db():

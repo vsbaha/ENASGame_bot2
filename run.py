@@ -15,7 +15,7 @@ load_dotenv()
 
 logger = logging.getLogger("ENASGameBot")
 
-async def main():
+async def main() -> None:
     logger.info("Starting bot initialization...")
     await create_db()
     logger.info("Database checked/created.")
@@ -61,5 +61,8 @@ if __name__ == "__main__":
     try:
         logger.info("Bot is starting...")
         asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен")
+        sys.exit(0)
     except Exception as e:
         logger.exception("Fatal error in main loop")

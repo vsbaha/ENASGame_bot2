@@ -11,11 +11,12 @@ class CreateTournament(StatesGroup):
     REGULATIONS = State()
     
 class RegisterTeam(StatesGroup):
-    SELECT_TOURNAMENT = State()
     TEAM_NAME = State()
     TEAM_LOGO = State()
-    ADD_PLAYERS = State()
-    CONFIRMATION = State()
+    PLAYER_COUNT = State()
+    PLAYER_INFO = State()
+    ADD_SUBSTITUTES = State()
+    SUBSTITUTE_INFO = State()
     
 class AdminActions(StatesGroup):
     WAITING_ADMIN_USERNAME = State()

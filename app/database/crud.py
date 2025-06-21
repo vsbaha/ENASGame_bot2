@@ -57,15 +57,24 @@ async def create_team(session: AsyncSession, data: dict) -> Team:
         await session.rollback()
         raise
 
-async def add_players_to_team(session: AsyncSession, team_id: int, players: list[int], is_substitute: bool = False):
+
+
+async def add_player_to_team(session: AsyncSession, team_id: int, nickname: str, game_id: str, is_substitute: bool, captain_id: int):
     try:
-        for user_id in players:
-            player = Player(team_id=team_id, user_id=user_id, is_substitute=is_substitute)
-            session.add(player)
+        player = Player(
+            team_id=team_id,
+            nickname=nickname,
+            game_id=game_id,
+            is_substitute=is_substitute,
+            captain_id=captain_id
+        )
+        session.add(player)
         await session.commit()
-        logger.info(f"Added players {players} to team {team_id} (is_substitute={is_substitute})")
+        await session.refresh(player)
+        logger.info(f"Added player {nickname} to team {team_id} with captain {captain_id}")
+        return player
     except Exception as e:
-        logger.error(f"Failed to add players {players} to team {team_id}: {e}", exc_info=True)
+        logger.error(f"Failed to add player {nickname} to team {team_id}: {e}", exc_info=True)
         await session.rollback()
         raise
 

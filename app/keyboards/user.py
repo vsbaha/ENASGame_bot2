@@ -95,3 +95,9 @@ def captain_groups_url_kb():
     )
     builder.adjust(1)
     return builder.as_markup()
+
+def confirm_delete_team_kb(team_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Да, удалить", callback_data=f"confirm_delete_team_{team_id}")],
+        [InlineKeyboardButton(text="Отмена", callback_data="cancel_delete_team")]
+    ])

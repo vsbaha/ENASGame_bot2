@@ -13,6 +13,7 @@ from aiogram.filters import StateFilter
 from app.states import CreateTournament, Broadcast
 from app.services.file_handling import save_file
 from app.services.notifications import notify_super_admins
+from app.filters.message_type_filter import MessageTypeFilter
 import logging
 import asyncio
 import os
@@ -140,14 +141,16 @@ async def select_format(call: CallbackQuery, state: FSMContext, session: AsyncSe
     )
     await state.set_state(CreateTournament.NAME)
 
-@router.message(CreateTournament.NAME)
+@router.message(CreateTournament.NAME, MessageTypeFilter())
 async def process_name(message: Message, state: FSMContext):
+    if len(message.text) > 100:  # Пример ограничения длины названия
+        return await message.answer("❌ Название турнира слишком длинное. Максимум 100 символов.")
     logger.info(f"User {message.from_user.id} entered tournament name: {message.text}")
     await state.update_data(name=message.text)
     await message.answer("🌄 Загрузите логотип (фото):")
     await state.set_state(CreateTournament.LOGO)
 
-@router.message(CreateTournament.LOGO, F.photo)
+@router.message(CreateTournament.LOGO, MessageTypeFilter())
 async def process_logo(message: Message, state: FSMContext, bot: Bot):
     logger.info(f"User {message.from_user.id} uploaded tournament logo")
     file_id = message.photo[-1].file_id
@@ -156,10 +159,12 @@ async def process_logo(message: Message, state: FSMContext, bot: Bot):
     await message.answer("📅 Введите дату начала (ДД.ММ.ГГГГ ЧЧ:ММ):")
     await state.set_state(CreateTournament.START_DATE)
 
-@router.message(CreateTournament.START_DATE)
+@router.message(CreateTournament.START_DATE, MessageTypeFilter())
 async def process_date(message: Message, state: FSMContext):
     try:
         date = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
+        if date < datetime.now():
+            return await message.answer("❌ Дата начала турнира не может быть в прошлом.")
         logger.info(f"User {message.from_user.id} entered tournament start date: {message.text}")
         await state.update_data(start_date=date)
         await message.answer("📝 Введите описание:")
@@ -168,31 +173,45 @@ async def process_date(message: Message, state: FSMContext):
         logger.warning(f"User {message.from_user.id} entered invalid date: {message.text}")
         await message.answer("❌ Неверный формат даты! Пример: 01.01.2025 14:00")
 
-@router.message(CreateTournament.DESCRIPTION)
+@router.message(CreateTournament.DESCRIPTION, MessageTypeFilter())
 async def process_description(message: Message, state: FSMContext):
+    if len(message.text) > 1000:  # Пример ограничения длины описания
+        return await message.answer("❌ Описание турнира слишком длинное. Максимум 1000 символов.")
     logger.info(f"User {message.from_user.id} entered tournament description")
     await state.update_data(description=message.text)
     await message.answer("📄 Загрузите регламент (PDF):")
     await state.set_state(CreateTournament.REGULATIONS)
 
-@router.message(CreateTournament.REGULATIONS, F.document)
+@router.message(CreateTournament.REGULATIONS)
 async def finish_creation(message: Message, state: FSMContext, bot: Bot, session: AsyncSession):
+    if not message.document:
+        return await message.answer("❌ Пожалуйста, отправьте регламент в виде PDF-файла.")
     if message.document.mime_type != "application/pdf":
         logger.warning(f"User {message.from_user.id} tried to upload non-PDF as regulations")
         return await message.answer("❌ Только PDF-файлы!")
+    if message.document.file_size > 10 * 1024 * 1024:  # Ограничение размера файла (10 МБ)
+        return await message.answer("❌ Файл слишком большой. Максимальный размер - 10 МБ.")
+    
     user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
     if not user:
         logger.error(f"User {message.from_user.id} not found in DB during tournament creation")
         await message.answer("❌ Пользователь не найден! Вызовите /start")
         await state.clear()
         return
+    
     file_path = await save_file(bot, message.document.file_id, "tournaments/regulations")
     data = await state.get_data()
-    status = (
-        TournamentStatus.APPROVED
-        if user.role == UserRole.SUPER_ADMIN
-        else TournamentStatus.PENDING
-    )
+    
+    # Проверка наличия всех необходимых данных
+    required_fields = ['game_id', 'format_id', 'name', 'logo_path', 'start_date', 'description']
+    if not all(field in data for field in required_fields):
+        logger.error(f"Missing required fields for tournament creation: {data}")
+        await message.answer("❌ Ошибка при создании турнира. Пожалуйста, начните процесс заново.")
+        await state.clear()
+        return
+    
+    status = TournamentStatus.APPROVED if user.role == UserRole.SUPER_ADMIN else TournamentStatus.PENDING
+    
     tournament = Tournament(
         game_id=data['game_id'],
         format_id=data['format_id'],
@@ -205,20 +224,25 @@ async def finish_creation(message: Message, state: FSMContext, bot: Bot, session
         status=status,
         created_by=user.id
     )
+    
     session.add(tournament)
     await session.commit()
+    
     logger.info(f"Tournament '{data['name']}' created by user {message.from_user.id} (status: {status})")
+    
     if status == TournamentStatus.PENDING:
         await notify_super_admins(
             bot=bot,
             text=f"Новый турнир на модерации: {data['name']}",
             session=session
         )
+    
     await message.answer(
-        f"✅ Турнир <b>{data['name']}</b> успешно создан, и был отправлен на модерацию!\n"
+        f"✅ Турнир <b>{data['name']}</b> успешно создан и отправлен на модерацию!\n"
         f"Дата старта: {data['start_date'].strftime('%d.%m.%Y %H:%M')}",
         parse_mode="HTML"
     )
+    
     await state.clear()
 
     
@@ -412,9 +436,7 @@ async def moderate_team(call: CallbackQuery, session: AsyncSession):
     players = list(players)
     player_usernames = []
     for player in players:
-        user = await session.scalar(select(User).where(User.telegram_id == player.user_id))
-        if user:
-            player_usernames.append(f"@{user.username or user.telegram_id}")
+        player_usernames.append(f"{player.nickname} (ID в игре: {player.game_id})")
 
     # Получаем капитана
     captain = await session.scalar(select(User).where(User.telegram_id == team.captain_tg_id))
@@ -475,9 +497,7 @@ async def preview_team(call: CallbackQuery, session: AsyncSession):
     players = list(players)
     player_usernames = []
     for player in players:
-        user = await session.scalar(select(User).where(User.telegram_id == player.user_id))
-        if user:
-            player_usernames.append(f"@{user.username or user.telegram_id}")
+        player_usernames.append(f"{player.nickname} (ID в игре: {player.game_id})")
 
     # Получаем капитана
     captain = await session.scalar(select(User).where(User.telegram_id == team.captain_tg_id))
@@ -669,7 +689,7 @@ async def broadcast_get_photo(message: Message, state: FSMContext, session: Asyn
     )
     await state.clear()
 
-@router.message(Broadcast.PHOTO)
+@router.message(Broadcast.PHOTO, MessageTypeFilter())
 async def broadcast_no_photo(message: Message, state: FSMContext, session: AsyncSession, bot: Bot):
     if message.text and message.text.lower() == "нет":
         data = await state.get_data()
@@ -856,9 +876,7 @@ async def send_approved_teams(message: Message, session: AsyncSession, bot: Bot)
         # Формируем список участников
         members = []
         for player in players:
-            user = await session.scalar(select(User).where(User.telegram_id == player.user_id))
-            if user:
-                members.append(f"@{user.username}" if user.username else f"ID:{user.telegram_id}")
+            members.append(f"{player.nickname} (ID в игре: {player.game_id})")
         members_text = ", ".join(members) if members else "—"
 
         # Формируем текст сообщения
