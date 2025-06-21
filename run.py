@@ -29,12 +29,14 @@ async def main() -> None:
     dp.update.middleware(UserAutoUpdateMiddleware())  # <-- Добавьте сюда
     dp.message.middleware(SubscriptionMiddleware())
     dp.callback_query.middleware(SubscriptionMiddleware())
+    dp.callback_query.middleware(UserAutoUpdateMiddleware())
 
     # Роутеры
-    dp.include_router(common.router)
+    
     dp.include_router(user.router)
     dp.include_router(admin.router)
     dp.include_router(super_admin.router)
+    dp.include_router(common.router)
 
     logger.info("Bot started polling.")
     await dp.start_polling(bot)

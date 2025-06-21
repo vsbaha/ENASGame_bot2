@@ -175,10 +175,41 @@ async def process_date(message: Message, state: FSMContext):
 
 @router.message(CreateTournament.DESCRIPTION, MessageTypeFilter())
 async def process_description(message: Message, state: FSMContext):
-    if len(message.text) > 1000:  # Пример ограничения длины описания
+    if len(message.text) > 1000:
         return await message.answer("❌ Описание турнира слишком длинное. Максимум 1000 символов.")
     logger.info(f"User {message.from_user.id} entered tournament description")
     await state.update_data(description=message.text)
+    await message.answer(
+        "🔗 Введите список обязательных каналов для регистрации через запятую или пробел (например: @channel1, @channel2):"
+    )
+    await state.set_state(CreateTournament.REQUIRED_CHANNELS)
+
+@router.message(CreateTournament.REQUIRED_CHANNELS, MessageTypeFilter())
+async def process_required_channels(message: Message, state: FSMContext, bot: Bot):
+    text = message.text.replace(",", " ").replace("\n", " ")
+    channels = [ch.strip() for ch in text.split() if ch.strip()]
+    if not channels:
+        await message.answer("❌ Укажите хотя бы один канал!")
+        return
+
+    # Проверяем, что бот состоит в каждом канале
+    not_in_channels = []
+    for ch in channels:
+        try:
+            member = await bot.get_chat_member(ch, bot.id)
+            if member.status not in ("member", "administrator", "creator"):
+                not_in_channels.append(ch)
+        except Exception:
+            not_in_channels.append(ch)
+    if not_in_channels:
+        channels_list = "\n".join([f"• {ch}" for ch in not_in_channels])
+        await message.answer(
+            f"❌ Бот не состоит в следующих каналах, поэтому не сможет проверять подписку:\n{channels_list}\n\n"
+            "Добавьте бота в эти каналы и попробуйте снова."
+        )
+        return
+
+    await state.update_data(required_channels=channels)
     await message.answer("📄 Загрузите регламент (PDF):")
     await state.set_state(CreateTournament.REGULATIONS)
 
@@ -222,7 +253,8 @@ async def finish_creation(message: Message, state: FSMContext, bot: Bot, session
         regulations_path=file_path,
         is_active=True,
         status=status,
-        created_by=user.id
+        created_by=user.id,
+        required_channels=",".join(data.get("required_channels", []))  # <-- добавлено!
     )
     
     session.add(tournament)

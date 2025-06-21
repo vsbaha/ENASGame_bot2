@@ -78,6 +78,17 @@ def edit_team_menu_kb(team_id: int):
     builder.adjust(2)
     return builder.as_markup()
 
+def edit_players_kb(players):
+    builder = InlineKeyboardBuilder()
+    for idx, player in enumerate(players, 1):
+        builder.button(
+            text=f"{idx}. {player.nickname} (ID: {player.game_id})",
+            callback_data=f"edit_player_{player.id}"
+        )
+    builder.button(text="⬅️ Назад", callback_data="edit_team_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
 def subscription_kb():
     builder = InlineKeyboardBuilder()
     for ch in REQUIRED_CHANNELS:

@@ -83,6 +83,7 @@ class Tournament(Base):
     teams: Mapped[List["Team"]] = relationship(back_populates="tournament", cascade="all, delete-orphan")
     status: Mapped[TournamentStatus] = mapped_column(default=TournamentStatus.PENDING, index=True)
     created_by: Mapped[int] = mapped_column(BigInteger)  # ID создателя
+    required_channels: Mapped[str] = mapped_column(String, default="")
 
 class Team(Base):
     __tablename__ = "teams"

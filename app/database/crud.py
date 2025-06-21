@@ -142,3 +142,13 @@ async def get_blacklist_entry(session, user_id: int):
     entry = await session.get(BlackList, user_id)
     logger.debug(f"Fetched blacklist entry for user {user_id}: {entry}")
     return entry
+
+async def update_required_channels(session: AsyncSession, tournament_id: int, channels: list[str]):
+    """Обновить список обязательных каналов для турнира"""
+    tournament = await session.get(Tournament, tournament_id)
+    if tournament:
+        tournament.required_channels = ",".join(channels)
+        await session.commit()
+        logger.info(f"Updated required_channels for tournament {tournament_id}: {channels}")
+        return True
+    return False

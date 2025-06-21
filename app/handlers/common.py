@@ -94,3 +94,7 @@ async def support_handler(message: Message):
         "@Teriomate, @Manya169, @pelmeshka221",
         parse_mode="HTML"
     )
+    
+@router.message()
+async def catch_all(message: Message):
+    await message.answer("Я тебя не понимаю. Пожалуйста, воспользуйтесь меню или командами.", reply_markup=main_menu_kb())

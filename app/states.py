@@ -8,6 +8,7 @@ class CreateTournament(StatesGroup):
     LOGO = State()
     START_DATE = State()
     DESCRIPTION = State()
+    REQUIRED_CHANNELS = State()
     REGULATIONS = State()
     
 class RegisterTeam(StatesGroup):
@@ -26,7 +27,7 @@ class EditTeam(StatesGroup):
     LOGO = State()
     PLAYERS = State()
     CHOICE = State()
-    
+    EDIT_PLAYER = State()
 
 class Broadcast(StatesGroup):
     TEXT = State()

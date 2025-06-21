@@ -9,6 +9,7 @@ from app.services.notifications import notify_super_admins
 from app.database.db import User, Player, Game, Team, TeamStatus, UserRole, Tournament, TournamentStatus, GameFormat, Team, Player
 from app.states import EditTeam, RegisterTeam
 from app.filters.message_type_filter import MessageTypeFilter
+from app.utils.subscription import check_subscription
 import os
 import re
 import logging
@@ -28,7 +29,9 @@ from app.keyboards.user import (
     edit_team_menu_kb,
     main_menu_kb,
     captain_groups_url_kb,
-    confirm_delete_team_kb
+    confirm_delete_team_kb,
+    edit_players_kb,
+    subscription_kb
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -67,6 +70,7 @@ async def show_tournament_info(call: CallbackQuery, session: AsyncSession):
     
 @router.callback_query(F.data.startswith("user_select_game_"))
 async def show_formats(call: CallbackQuery, session: AsyncSession, state: FSMContext):
+    await state.clear()
     game_id = int(call.data.split("_")[3])
     formats = await session.scalars(
         select(GameFormat).where(GameFormat.game_id == game_id)
@@ -99,13 +103,43 @@ async def start_team_registration(call: CallbackQuery, state: FSMContext, sessio
     if not tournament or not tournament.is_active:
         await call.answer("❌ Турнир недоступен для регистрации", show_alert=True)
         return
-    await call.message.delete()  # Удаляем сообщение с кнопкой "Начать регистрацию"
+    await call.message.delete()
     await state.update_data(tournament_id=tournament_id)
+
+    not_subscribed = await check_subscription(call.bot, session, call.from_user.id, tournament_id)
+    if not_subscribed:
+        channels_list = "\n".join([f"• {ch}" for ch in not_subscribed])
+        text = (
+            "❗ Для участия в этом турнире подпишитесь на все каналы:\n"
+            f"{channels_list}\n\n"
+            "После подписки нажмите <b>Проверить подписку</b>."
+        )
+        await call.message.answer(text, reply_markup=subscription_kb(), parse_mode="HTML")
+        return
+
+    # --- Если каналов нет, продолжаем регистрацию ---
     await call.message.answer("🏷 Введите название команды:")
     await state.set_state(RegisterTeam.TEAM_NAME)
 
 
-
+@router.callback_query(F.data == "check_subscription")
+async def check_subscription_callback(call: CallbackQuery, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    tournament_id = data.get("tournament_id")
+    not_subscribed = await check_subscription(call.bot, session, call.from_user.id, tournament_id)
+    if not_subscribed:
+        channels_list = "\n".join([f"• {ch}" for ch in not_subscribed])
+        text = (
+            "❗ Вы ещё не подписались на все каналы:\n"
+            f"{channels_list}\n\n"
+            "После подписки нажмите <b>Проверить подписку</b>."
+        )
+        await call.message.answer(text, reply_markup=subscription_kb(), parse_mode="HTML")
+        return
+    await call.message.delete()
+    await call.answer("✅ Подписка проверена!")
+    await call.message.answer("🏷 Введите название команды:")
+    await state.set_state(RegisterTeam.TEAM_NAME)
         
 @router.callback_query(F.data.startswith("user_select_format_"))
 async def show_tournaments_by_format(call: CallbackQuery, session: AsyncSession, state: FSMContext):
@@ -497,6 +531,7 @@ async def show_my_team(call: CallbackQuery, session: AsyncSession):
         await call.answer("Эта команда была отклонена и недоступна для просмотра.", show_alert=True)
         await call.message.delete()
         return
+    not_subscribed = await check_subscription(call.bot, session, call.from_user.id, team.tournament_id)
 
     tournament = await session.get(Tournament, team.tournament_id)
     players = await session.scalars(select(Player).where(Player.team_id == team.id))
@@ -821,107 +856,103 @@ async def process_edit_team_logo(message: Message, state: FSMContext, session: A
     await state.clear()
     
 @router.callback_query(F.data.regexp(r"^edit_team_players_\d+$"))
-async def edit_team_players(call: CallbackQuery, state: FSMContext):
-    logger.info(f"User {call.from_user.id} wants to edit team players for {call.data}")
+async def edit_team_players(call: CallbackQuery, state: FSMContext, session: AsyncSession):
     team_id = int(call.data.split("_")[3])
+    team = await session.get(Team, team_id)
+    if not team or team.captain_tg_id != call.from_user.id:
+        await call.answer("Только капитан может редактировать команду!", show_alert=True)
+        return
+    players = await session.scalars(select(Player).where(Player.team_id == team.id))
+    players = list(players)
     await state.update_data(team_id=team_id)
-    await call.message.answer("Введите информацию о новых игроках в формате: Ник | ID\nКаждого игрока с новой строки. Например:\nPlayer1 | 12345\nPlayer2 | 67890")
+    await call.message.edit_text(
+        "Выберите игрока для редактирования:",
+        reply_markup=edit_players_kb(players)
+    )
     await state.set_state(EditTeam.PLAYERS)
 
+@router.callback_query(F.data.startswith("edit_player_"))
+async def edit_player_start(call: CallbackQuery, state: FSMContext, session: AsyncSession):
+    player_id = int(call.data.split("_")[2])
+    player = await session.get(Player, player_id)
+    if not player:
+        await call.answer("Игрок не найден.", show_alert=True)
+        return
+    await state.update_data(edit_player_id=player_id)
+    await call.message.answer(
+        f"Введите новые данные для игрока:\n"
+        f"Текущий: {player.nickname} | {player.game_id}\n"
+        f"Формат: Ник | ID"
+    )
+    await state.set_state(EditTeam.EDIT_PLAYER)
 
-
-@router.message(EditTeam.PLAYERS, MessageTypeFilter())
-async def process_edit_team_players(message: Message, state: FSMContext, session: AsyncSession):
-    logger.info(f"User {message.from_user.id} edits team players: {message.text}")
+@router.message(EditTeam.EDIT_PLAYER, MessageTypeFilter())
+async def process_edit_player(message: Message, state: FSMContext, session: AsyncSession):
     data = await state.get_data()
-    team = await session.get(Team, data["team_id"])
-    if not team or team.captain_tg_id != message.from_user.id:
-        await message.answer("Только капитан может редактировать команду!")
+    player_id = data.get("edit_player_id")
+    team_id = data.get("team_id")
+    player = await session.get(Player, player_id)
+    if not player or player.team_id != team_id:
+        await message.answer("Ошибка: игрок не найден.")
         await state.clear()
         return
 
-    players_data = message.text.strip().split('\n')
-    players = []
-    nicknames = set()
-    game_ids = set()
-    for player_info in players_data:
-        try:
-            nickname, game_id = player_info.split('|')
-            nickname = nickname.strip()
-            game_id = game_id.strip()
-            
-            # Проверка на уникальность никнейма и game_id в рамках команды
-            if nickname in nicknames:
-                await message.answer(f"❌ Никнейм {nickname} уже используется в команде.")
-                return
-            if game_id in game_ids:
-                await message.answer(f"❌ Game ID {game_id} уже используется в команде.")
-                return
-            
-            nicknames.add(nickname)
-            game_ids.add(game_id)
-            players.append({"nickname": nickname, "game_id": game_id})
-        except ValueError:
-            await message.answer(f"Ошибка в формате данных: {player_info}\nИспользуйте формат: Ник | ID")
-            return
-
-    # Проверяем лимит игроков
-    tournament = await session.get(Tournament, team.tournament_id)
-    format = await session.get(GameFormat, tournament.format_id)
-    if len(players) > format.max_players_per_team:
-        await message.answer(f"❌ Максимум игроков для этого формата: {format.max_players_per_team}")
-        return
-    if len(players) < format.min_players_per_team:
-        await message.answer(f"❌ Минимум игроков для этого формата: {format.min_players_per_team}")
+    try:
+        nickname, game_id = message.text.split('|')
+        nickname = nickname.strip()
+        game_id = game_id.strip()
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите информацию в формате: Ник | ID")
         return
 
-    # Проверка уникальности никнейма и game_id в рамках турнира
-    for player in players:
-        existing_player = await session.scalar(
-            select(Player).join(Team).where(
-                (Team.tournament_id == team.tournament_id) &
-                ((Player.nickname.ilike(player['nickname'])) | (Player.game_id.ilike(player['game_id']))) &
-                (Team.id != team.id)  # Исключаем текущую команду из проверки
-            )
-        )
-        if existing_player:
-            await message.answer(f"❌ Игрок с никнеймом {player['nickname']} или Game ID {player['game_id']} уже зарегистрирован в другой команде этого турнира.")
-            return
-
-    # Удаляем старых игроков и добавляем новых
-    await session.execute(delete(Player).where(Player.team_id == team.id))
-    for player in players:
-        new_player = Player(
-            team_id=team.id, 
-            nickname=player['nickname'], 
-            game_id=player['game_id'],
-            captain_id=message.from_user.id  # всегда Telegram ID капитана
-        )
-        session.add(new_player)
-    
-    await session.commit()
-    await message.answer("Состав команды обновлён!")
-    await state.clear()
-
-    # Показываем обновленный состав команды
-    players = await session.scalars(select(Player).where(Player.team_id == team.id))
-    players_list = "\n".join([f"{p.nickname} | {p.game_id}" for p in players])
-    await message.answer(f"Новый состав команды:\n{players_list}")
-    
-@router.callback_query(F.data == "show_tournaments")
-async def show_tournaments_cb(call: CallbackQuery, session: AsyncSession, state: FSMContext):
-    await state.clear()
-    games = await session.scalars(select(Game))
-    await call.message.answer(
-        "🎮 Выберите игру:",
-        reply_markup=games_list_kb(games)
+    # Проверка уникальности среди других игроков этой команды
+    other_players = await session.scalars(
+        select(Player).where(Player.team_id == team_id, Player.id != player_id)
     )
+    for p in other_players:
+        if p.nickname == nickname:
+            await message.answer(f"❌ Никнейм {nickname} уже используется в команде.")
+            return
+        if p.game_id == game_id:
+            await message.answer(f"❌ Game ID {game_id} уже используется в команде.")
+            return
 
-@router.callback_query(F.data == "check_subscription")
-async def check_subscription(call: CallbackQuery):
-    logger.info(f"User {call.from_user.id} checked subscription")
-    await call.answer("✅ Вы подписаны на все каналы!", show_alert=True)
-    await call.message.delete()
-    await call.message.answer("Проверка подписки завершена. Вы можете продолжать!", reply_markup=main_menu_kb())
+    # Проверка уникальности в рамках турнира
+    team = await session.get(Team, team_id)
+    existing_player = await session.scalar(
+        select(Player).join(Team).where(
+            (Team.tournament_id == team.tournament_id) &
+            ((Player.nickname.ilike(nickname)) | (Player.game_id.ilike(game_id))) &
+            (Player.id != player_id)
+        )
+    )
+    if existing_player:
+        await message.answer("❌ Игрок с таким ником или ID уже зарегистрирован в этом турнире.")
+        return
 
+    player.nickname = nickname
+    player.game_id = game_id
+    await session.commit()
+    await message.answer("Данные игрока обновлены!")
 
+    # Показываем снова список игроков для дальнейшего редактирования
+    players = await session.scalars(select(Player).where(Player.team_id == team_id))
+    players = list(players)
+    await message.answer(
+        "Выберите игрока для редактирования:",
+        reply_markup=edit_players_kb(players)
+    )
+    await state.set_state(EditTeam.PLAYERS)
+
+@router.callback_query(F.data == "edit_team_menu")
+async def back_to_edit_team_menu(call: CallbackQuery, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    team_id = data.get("team_id")
+    if not team_id:
+        await call.answer("Ошибка: команда не найдена.", show_alert=True)
+        return
+    await call.message.edit_text(
+        "Что вы хотите изменить?",
+        reply_markup=edit_team_menu_kb(team_id)
+    )
+    await state.set_state(EditTeam.CHOICE)
